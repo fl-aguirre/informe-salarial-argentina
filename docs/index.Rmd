@@ -1,0 +1,461 @@
+---
+title: "Informe sobre salario medio por departamento y sector de actividad en Argentina"
+author: "Franco Aguirre"
+date: "2023-03-19"
+output:
+  prettydoc::html_pretty:
+    theme: hpstr
+    highlight: github
+---
+
+<style>
+body {
+  text-align: justify
+  img-align: center
+}
+</style>
+---
+
+El presente informe constituye una instancia evaluativa de la Diplomatura en Ciencias Sociales Computacionales y Humanidades Digitales de la UNSAM. Para el análisis, se empleó como insumo la base de datos "Salarios por departamento/partido y clae2, total empresas", del Ministerio de Desarrollo Productivo de la Nación. La misma recoge el salario bruto promedio de los trabajadores del universo total empresas (sector privado + empresas públicas), por departamento/partido y clae a dos dígitos, con frecuencia mensual, desde 2014 hasta noviembre de 2022. Asimismo, se recurre al Diccionario de claes (nomencladores de AFIP para clasificar actividades económicas, por letra y clae a dos dígitos) y el Diccionario de departamentos, con los códigos de INDEC para caracterizar los departamento/partidos y provincias con su correspondiente descripción (el código de CABA es un un código ficticio). Finalmente, se empleó la base con datos georreferenciados por departamentos del país. Se plantearon tres objetivos, a saber:
+
+1.  Identificar los departamentos con mayores salarios, y expresarlos en un mapa coroplético.
+
+2.  Identificar los 5 sectores de actividad con salarios más bajos, expresados en un gráfico de barras/columnas.
+
+3.  Elegir 4 sectores de actividad o grupos de sectores y visualizar la evolución de los salarios a lo largo de los años disponibles.
+
+## Librerías e importación de bases
+
+### Librerías básicas
+
+Primero, se procede a instalar las librerías básicas a usar. Se incluyen `tidyverse` y `dplyr` para emplear algunas funciones y simplificar la sintaxis, y `ggplot2` para visualizar la información. Asimismo, se importarán otros paquetes complementarios cuando corresponda.
+
+```{r librerias, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+```
+
+### Importación de bases de datos
+
+Se sigue con la importación de las bases correspondiente. En primera instancia, importamos con `read_csv` la base de datos "Salarios por departamento/partido y clae2, total empresas", y la guardamos con el nombre de `w_mean_total`.
+
+```{r base de salarios, echo=TRUE}
+w_mean_total <- read_csv(file = "w_mean_depto_total_clae2.csv")
+```
+
+A continuación, se importa con la misma función las bases de Diccionarios de de claes (sector de actividad) y de departamentos. Mediante la unión de todas las bases, se contará con la descripción de los códigos del sector de actividad (letra y clae2) y de los departamentos con sus respectivas provincias. Las nombramos `dic_clae` y `dic_depto`.
+
+```{r bases diccionarios, echo=TRUE}
+dic_clae <- read_csv(file = "diccionario_clae2.csv")
+dic_depto <- read_csv(file = "diccionario_cod_depto.csv")
+```
+
+## Exploración de las bases importadas
+
+Tras la importación de las bases, se avanza con una exploración inicial de las bases de datos. Primero, devolvemos con `colnames()` el nombre de las variables de `w_mean_total`.
+
+```{r colnames w_mean_total}
+colnames(w_mean_total)
+```
+
+Con la función `head()`, se pueden observar los primeros datos (en este caso, los primeros 10) de la base `w_mean_total`.
+
+```{r head w_mean_total}
+head(w_mean_total, 10)
+```
+
+Con la función `summary()`, se analizan las principales medidas y clases de las variables de la base de datos.
+
+```{r summary() w_mean_total}
+summary(w_mean_total)
+```
+
+Se observa que hay 9095 casos `NA's` en dos de las columnas a trabajar, a saber:`codigo_departamento_indec`y `id_provincia_indec`. Decidí mantenerlos, ya que puedan servir para trabajar sólo con los sectores de actividad. En todo caso, podemos ignorarlos al agruparlos por departamentos. También osbervamos que hay salarios promedios (`w_mean`) registrados como -99. Esos van a ser erradicados para evitar sesgos. Creamos una nueva base llamada `w_mean_clean` que corra la función `filter()` del paquete `dplyr`. Se corre nuevamente la función `summary()`.
+
+```{r clean w_mean, echo=TRUE}
+w_mean_clean <- w_mean_total %>% 
+  filter(w_mean != -99)
+
+summary(w_mean_clean)
+```
+
+En este primer análisis, corroboramos que las fechas registradas van desde enero de 2014 a noviembre de 2022. También se observan algunos valores raros, como un máximo de 999 para la variable `clae2`. Pero corriendo un filtro sobre `dic_clae`, corroboramos que se trata de un código real correspondiente a "Otros sectores".
+
+```{r filtro sobre clae2}
+filter(dic_clae, clae2 == 999)
+```
+
+Observando nuevamente los datos del `summary()`, se descubren algunos datos interesantes sobre `w_mean`. Es posible retomar estos datos con las funciones de más abajo. Se obtuvo una mínima de **`r format(min(w_mean_clean$w_mean), scientific = F)`**, una máxima de **`r format(max(w_mean_clean$w_mean), scientific = F)`**, una media de **`r format(mean(w_mean_clean$w_mean), scientific = F)`**, una mediana de **`r format(median(w_mean_clean$w_mean), scientific = F)`**, de un total de **`r nrow(w_mean_clean)`** casos. Esto ya nos indica una gran dispersión hacia los valores más altos, y una concentración de casos en los valores bajos.
+
+Finalmente, se procede a explorar los diccionarios `dic_clae` y `dic_depto` con las funciones empleadas para la base de salarios. Primero con la base de sectores de actividad `dic_clae`:
+
+```{r exploración dic_clae}
+head(dic_clae, 10)
+summary(dic_clae)
+```
+
+A continuación, se aplicaron las mismas funciones con la base de departamentos `dic_depto`:
+
+```{r exploración dic_depto}
+head(dic_depto, 10)
+summary(dic_depto)
+```
+
+## Unificación de bases de datos
+
+Como ya se ha explicado, se optó por unificar la base de salarios con los diccionarios para aportarle descripción a las variables de interés. En primera instancia, se revisa en las tablas anteriores que exista coincidencia entre los nombres y las clases de las columnas en común, en este caso los códigos de los departamentos y los sectores de actividad. Podemos volver a revisar con el código `colnames()`. Si se contrasta con `dic_depto`, coincide con las variables `codigo_departamento_indec` y `id_provincia_indec`. Y si se compara con `dic_clae`, coincide con `clae2` en los mismos parámetros.
+
+```{r colnames para join}
+colnames(w_mean_clean)
+colnames(dic_depto)
+colnames(dic_clae)
+```
+
+A partir de estas variables coincidentes, se unifican las bases `w_mean_clean` y `dic_depto` en una nueva base de datos llamada `w_mean_dpto` con la función `left_join()`. Esta nos permite unir la segunda base sobre la primera, manteniendo los datos de la primera y sólo las coincidencias de la segunda. Una vez completado el join, revisamos los parámetros de la nueva base. Vemos que se han sumado dos variables más: `nombre_departamento_indec` y `nombre_provincia_indec`.
+
+```{r join  w_mean_dpto}
+w_mean_dpto <- w_mean_clean %>% 
+  left_join(y = dic_depto, by = c("codigo_departamento_indec", "id_provincia_indec"))
+
+head(w_mean_dpto, 10)
+summary(w_mean_dpto)
+```
+
+A continuación, se procede con la unificación de las bases `w_mean_dpto` con los sectores de actividad en `dic_clae` en una nueva base llamada `w_mean_dpto_clae`. Ahora se sumaron tres variables más: `clae2_desc`, `letra` y `letra_desc`.
+
+```{r join  w_mean_dpto_clae}
+w_mean_dpto_clae <- w_mean_dpto %>% 
+  left_join(y = dic_clae, by = "clae2")
+
+head(w_mean_dpto_clae, 10)
+summary(w_mean_dpto_clae)
+```
+
+Una vez concretado el join y revisadas las medidas de la nueva base, se procuró reordenar y renombrar las variables en una base final llamada `w_mean_df`. Para cada paso, se emplaron las funciones `select()` y `rename()`. A continuación, volvemos a explorar la base para corroborar que los cambios han tenido éxito. Finalmente, se decidió exportar la nueva base en un csv con la función `write_csv()`, para evitar reiterar el procesamiento.
+
+```{r base w_mean_df, message=TRUE}
+w_mean_df <- w_mean_dpto_clae %>% 
+  select(fecha, 
+         w_mean, 
+         codigo_departamento_indec, 
+         nombre_departamento_indec, 
+         id_provincia_indec,
+         nombre_provincia_indec,
+         clae2,
+         clae2_desc,
+         letra,
+         letra_desc) %>% 
+  rename(id_departamento = codigo_departamento_indec,
+         departamento = nombre_departamento_indec,
+         id_provincia = id_provincia_indec,
+         provincia = nombre_provincia_indec)
+
+head(w_mean_df, 10)
+summary(w_mean_df)
+
+# write_csv(x = w_mean_df, file = "bases/w_mean_df.csv")
+```
+
+## Importación y tratamiento del geojson
+
+El paso siguiente consistió en volver a importar la base final en importar el archivo geojson, el cual cuenta con información georreferenciada de los departamentos, partidos y comunas de Argentina. Para facilitar el trabajo con este formato, se recurrió a la librería `sf`, de la cual se empleó la función `read_sf()`. Una vez guardada en el objeto `deptos`, se realiza una exploración inicial para revisar los parámetros del nuevo formato.
+
+```{r importar geojson, message=FALSE}
+library(sf)
+
+deptos <- read_sf("departamentos_arg.geojson")
+head(deptos)
+summary(deptos)
+```
+
+La visualización del archivo `deptos` con las funciones `ggplot()` y `geom_sf()` nos permiten proyectar la información geográfica en un mapa sobre el cual vamos a trabajar.
+
+```{r mapa geojson}
+ggplot(deptos) +
+  geom_sf()
+```
+
+Tras analizar los datos exploratorios del archivo `deptos`, se observa que los códigos de la Ciudad Autónoma de Buenos Aires, en la variable `codigo_departamento_indec`, difieren de los de la variable `id_departamento` de la base `w_mean_df`. El geojson subdivide el territorio de CABA por comunas, que suman una unidad extra al valor del código de la Ciudad (de 2000 a 2001, por ejemplo). Asimismo, se encuentra que las clases de las variables difieren, puesto que la primera se encuentra expresado en character. Lo mismo ocurre con los códigos de las provincias, así como los nombres.
+
+Revisamos también los códigos de la Ciudad de Buenos Aires, sabiendo que el primer caso de ambas bases coincide con el departamento en cuestión:
+
+```{r revisión de datos CABA}
+head(deptos, 1)
+head(w_mean_df, 1)
+```
+
+Asimismo, nos encontraremos con que los nombres de las provincias no coinciden. Esto no es tan relevante, ya que se emplea el código de departamento para unificar las bases. Se puede revisar con las funciones `unique()` y `sort()`, para ver los valores únicos de esta variable y ordenarlos alfabéticamente:
+
+```{r nombres provincias base deptos}
+unique(sort(deptos$provincia))
+```
+
+```{r nombres provincias base w_mean_df}
+unique(sort(w_mean_df$provincia))
+```
+
+Además de CABA, encontramos diferencias en las mayúsculas y en las tildes. Es por eso que se decidió pasarlos a mayúscula y quitarles las tildes, como se expresa a continuación.
+
+Se hizo uso de la función `mutate()` para crear una nueva variable que sobreescriba la anterior (si se mantiene el mismo nombre) y la función `as.numeric()` para cambiar la clase de las variables de caracter a número. También se emplea `rename()` para renombrar las columnas y poder hacer el join. Empleamos una función condicional `if_else()` para detectar y unificar los códigos de las comunas de CABA y el nombre de la Ciudad. Asimismo, empleamos la librería `stringi` y la función `stri_trans_general()` para quitar todos los tildes, además de `toupper()` para pasar todo a mayúscula. De esa forma, homogeneizamos los nombres de las provincias y los departamentos. Hacemos lo mismo sobre la base `w_mean_df`, para mantener el mismo formato.
+
+Por último, quitamos las variables que no vamos a emplear. Se optó por conservar la variable link como identificador de cada departamento, al igual que mantener el nombre de las comunas de CABA, ya que cuentan con una información geográfica diferenciada.
+
+```{r deptos_v1, message=FALSE}
+library(stringi)
+
+deptos_v1 <- deptos %>%
+  rename(departamento = departamen,
+         id_departamento = codigo_departamento_indec,
+         id_provincia = codpcia) %>%
+  mutate(id_departamento = as.numeric(id_departamento)) %>%
+  mutate(id_provincia = as.numeric(id_provincia)) %>% 
+  mutate(id_departamento = if_else(
+    id_provincia == 2, 2000, id_departamento)) %>%
+  mutate(provincia = toupper(stri_trans_general(provincia,"Latin-ASCII"))) %>%
+  mutate(departamento = toupper(stri_trans_general(departamento,"Latin-ASCII"))) %>%
+  mutate(provincia = if_else(
+    provincia == "CIUDAD AUTONOMA DE BUENOS AIRES", "CABA", provincia)) %>%
+  select(-mujeres, -varones, -personas, -hogares, -viv_part, -viv_part_h)
+
+w_mean_df <- w_mean_df %>% 
+  mutate(provincia = toupper(stri_trans_general(provincia,"Latin-ASCII"))) %>%
+  mutate(departamento = toupper(stri_trans_general(departamento,"Latin-ASCII")))
+
+head(deptos_v1, 10)
+head(w_mean_df, 10)
+```
+
+## Análisis de las bases de datos
+
+Tras preparar las bases `w_mean_df` y `deptos_v1`, continuamos con el análisis de las mismas, siguiendo los ejes predeterminados por el trabajo integrador.
+
+### 1. Departamentos con mayores salarios y mapa coroplético
+
+La primera consigna es identificar los departamentos con mayores salarios promedio del país y su visualización en un mapa coroplético. En esta instancia, se generó una nueva base que agrupe los salarios por departamento a partir de `w_mean_df`, y se aplicó un join con la base georregerenciada `deptos_v1` para su proyección en un mapa coroplético.
+
+#### Tabla con mayores salarios por departamento para 2022
+
+El primer paso constituyó en crear una nueva tabla a partir de `w_mean_df`. Para analizar los salarios de cada departamento, se filtró la base para el mes más actualizado, en este caso noviembre de 2022. En segundo lugar, se empleó la función `group_by()` para agrupar los salarios por departamento y provincia para ese mes en particular, incluyendo también sus códigos y nombres respectivos. Luego se utilizó la función `summarise` para generar la tabla que resuma los parámetros necesarios. Considerando que los salarios están promediados por sector de actividad y por departamento, se calculó una media para todos los sectores de actividad en cada departamento. Finalmente ordené la tabla con `arrange()` para los departamentos de mayor salario arriba.
+
+```{r tabla_dpto_2022, message=FALSE, warning=FALSE}
+tabla_dpto_2022 <- w_mean_df %>% 
+  filter(fecha == "2022-11-01") %>% 
+  group_by(departamento, id_departamento, id_provincia, provincia) %>% 
+  summarise(media_salario = mean(w_mean)) %>% 
+  arrange(-media_salario) %>% 
+  select(departamento, 
+         media_salario, 
+         provincia, 
+         id_departamento,
+         id_provincia)
+```
+
+Esta tabla resume la *media de los salarios de los sectores de actividad por departamento del país para el mes de noviembre de 2022*. Lo que se observa es la primacía San Isidro, de la provincia de Buenos Aires, con una media de `r format(tabla_dpto_2022$media_salario[1], scientific = F)`. En segundo lugar, se ubica Vicente López, otro partido de Buenos Aires, con una media salarial de `r format(tabla_dpto_2022$media_salario[2], scientific = F)`. Tercero, se ubica la Ciudad Autónoma de Buenos Aires, con un promedio de `r format(tabla_dpto_2022$media_salario[3], scientific = F)`. Junto a Pehuenches, departamento de la provincia de Neuquén, constituyen los cuatro departamentos con media salarial por encima de los 300000 pesos. Los siguientes seis departamentos los completan Escalante (Chubut), Anelo (Neuquén), Sarmiento (Chubut), Lanús (Buenos Aires), Deseado (Santa Cruz) y Capital (Mendoza).
+
+En efecto, las provincias con los 30 departamentos de mayor media salarial de la totalidad de los sectores de actividad son Buenos Aires, CABA, Neuquén, Chubut, Santa Cruz, Mendoza y Tierra del Fuego. Si consideramos que el cuartil por encima del 90% es mayor a los 248981.3 pesos, contemplaremos también la provincia de La Pampa (Puelen), Tucumán (Yerba Buena), Córdoba (Colón), Salta (Capital). Para ello, ejecutamos el siguiente código:
+
+```{r}
+quantile(tabla_dpto_2022$media_salario, prob=seq(0, 1, length = 11))
+head(tabla_dpto_2022, 100)
+```
+
+#### Mapa coroplético de salarios por departamentos
+
+El primer paso para crear el mapa es realizar un join de la base `tabla_dpto_2022` con la información de `deptos_v1`, creando una nueva tabla a llamarse `tabla_dpto_2022_geo`. Para ello, empleamos como variables coincidentes `id_departamento` y `id_provincia`. Se debe también recurrir a la función `st_as_sf()` para reconstituir la condición `sf` de la tabla. Luego exploramos algunos de los datos de la nueva base.
+
+```{r tabla_dpto_2022_geo}
+tabla_dpto_2022_geo <- tabla_dpto_2022 %>%
+  left_join(deptos_v1, by=c("id_departamento","id_provincia")) %>% 
+  st_as_sf() 
+  
+head(tabla_dpto_2022_geo)
+summary(tabla_dpto_2022_geo)
+```
+
+Tras revisar la nueva base, procedemos a crear el mapa con todos los departamentos del país y sus respectivas medias salariales. Se alberga en el objeto `mapa_dpto`, y se emplean las funciones `ggplot()` y `geom_sf()`. Asimismo, aplicamos algunos cambios estéticos con las funciones `scale_fill_viridis_c()` y `theme_void()`. También cambiamos la escala de `media_salario` para evadir la notación científica. Y ejecutamos el objeto creamos.
+
+Asimismo, podemos expresar un mapa que filtre las medias salariales mayores a 200000 pesos y que mantenga la capa del mapa en bruto de los departamentos del país. De esta forma, identificamos de forma más clara a los departamentos de mayores salarios.
+
+```{r mapa_dpto, fig.align = 'center'}
+mapa_dpto <- ggplot(tabla_dpto_2022_geo) +
+  geom_sf(aes(fill = media_salario/1000), color = NA) +
+  scale_fill_viridis_c() +
+  labs(title = "Salarios por departamento en Argentina",
+       subtitle = "Promedio de sectores a noviembre de 2022",
+       fill = "En miles de pesos") + 
+  theme_void()
+
+mapa_dpto
+
+mapa_dpto2 <- ggplot() +
+  geom_sf(data = deptos_v1) +
+  geom_sf(data = filter(tabla_dpto_2022_geo, media_salario > 200000), 
+                        aes(fill = media_salario/1000)) +
+  scale_fill_viridis_c() +
+  labs(title = "Departamentos con salarios mas altos de Argentina",
+       subtitle = "Promedio de sectores a noviembre de 2022",
+       fill = "En miles de pesos") + 
+  theme_void()
+
+mapa_dpto2
+```
+
+Como se puede observar, los departamentos con las medias salariales más altas se ubican en algunas zonas dispersas. Los más altos parecen concentrarse en el sur de Chubut y en Santa Cruz, y en el noreste de Neuquén, como también algunos departamentos de Rio Negro y Mendoza. La zona de la pampa húmeda, incluyendo algunos departamentos del norte Buenos Aires, Córdoba, Santa Fe y Entre Rios, también muestra una distribución más alta de salarios. A ellos se suman algunos departamentos de Mendoza, San Juan, Salta, Tucumán, Corrientes o La Rioja. Pero son justamente las provincias del norte las que tienen los mayores contrastes salariales, como el caso de Santiago del Estero. Podemos profundizar en algunas de las provincias y regiones más relevantes.
+
+```{r mapa_dpto varios}
+
+mapa_dpto_ba <- ggplot(filter(tabla_dpto_2022_geo, 
+                                  id_provincia==6 | 
+                                  id_provincia==2)) +
+  geom_sf(aes(fill = media_salario/1000), color = NA) +
+  scale_fill_viridis_c() +
+  labs(title = "Salarios por departamento en Buenos Aires y CABA",
+       subtitle = "Promedio de sectores a noviembre de 2022",
+       fill = "En miles de pesos") + 
+  theme_void()
+
+mapa_dpto_ptg <- ggplot(filter(tabla_dpto_2022_geo, 
+                                  id_provincia==58 | 
+                                  id_provincia==26 |
+                                  id_provincia==78 |
+                                  id_provincia==62)) +
+  geom_sf(aes(fill = media_salario/1000), color = NA) +
+  scale_fill_viridis_c() +
+  labs(title = "Salarios por departamento en la Patagonia",
+       subtitle = "Promedio de sectores a noviembre de 2022",
+       fill = "En miles de pesos") + 
+  theme_void()
+
+mapa_dpto_rg <- ggplot(filter(tabla_dpto_2022_geo, 
+                                  id_provincia==14 | 
+                                  id_provincia==82 |
+                                  id_provincia==30)) +
+  geom_sf(aes(fill = media_salario/1000), color = NA) +
+  scale_fill_viridis_c() +
+  labs(title = "Salarios por departamento en la Region Centro",
+       subtitle = "Promedio de sectores a noviembre de 2022",
+       fill = "En miles de pesos") + 
+  theme_void()
+```
+
+```{r mapa_dpto varios ejecución, fig.align = 'center'}
+mapa_dpto_ba
+mapa_dpto_ptg
+mapa_dpto_rg
+```
+
+En el caso de Buenos Aires y CABA, observamos importantes contrastes entre la Ciudad y los partidos septentrionales con relación a las regiones del interior de la provincia. También podemos analizar el caso de las provincias del sur del país, como Neuquén, Chubut o Santa Cruz. Finalmente, podemos analizar el mapa de las provincias de la Región Centro. Allí se vislumbran los grandes contrastes con el norte de la provincia de Córdoba, el norte de Santa Fe y el norte y centro de Entre Rios.
+
+### 2. Sectores de actividad con salarios más bajos en 2022
+
+El segundo punto consistió en determinar cuáles eran los sectores de actividad con los salarios más bajos para el periodo más actualizado (noviembre de 2022). Para ello, se optó por desdoblar la consigna en dos instancias: la primera para los sectores agregados por clae de dos dígitos, y la segunda para los sectores agregados por letras. En ambos casos, se construyeron tablas que agrupen los salarios por la variable de interés, y se visualizó la información con gráficos de barras/columnas.
+
+#### Sectores de actividad por clae de dos dígitos
+
+En el primer caso, construímos una tabla llamada `tabla_clae2_2022` que agrupe con `group_by()` los promedios salariales por sector `clae2_desc`, y que calcule la media con `summarise()` de todos los departamentos relevados, luego de filtrar los datos para noviembre de 2022. Se ordena de menor a mayor por salario, y se exponen los primeros cinco resultados. También realizamos modificaciones en los caractéres de la descripción del clae2, a fines de contemplarlo más claramente.
+
+```{r tabla_clae2_2022}
+tabla_clae2_2022 <- w_mean_df %>% 
+  filter(fecha == "2022-11-01") %>% 
+  mutate(clae2_desc = str_to_sentence(clae2_desc)) %>%
+  group_by(clae2_desc) %>% 
+  summarise(casos = n(),
+            media_salario = mean(w_mean)) %>% 
+  arrange(media_salario)
+
+head(tabla_clae2_2022, 5)
+```
+
+Como se atestigua, los sectores a dos dígitos de menor media salarial corresponde a **`r tabla_clae2_2022$clae2_desc[1]`**, con una media de **`r format(tabla_clae2_2022$media_salario[1], scientific=F)`**. Le siguieron **`r tabla_clae2_2022$clae2_desc[2]`**, con un promedio de **`r format(tabla_clae2_2022$media_salario[2], scientific=F)`**, y **`r tabla_clae2_2022$clae2_desc[3]`**, con un salario medio de **`r format(tabla_clae2_2022$media_salario[3], scientific=F)`**. Los dos sectores siguientes fueron **`r tabla_clae2_2022$clae2_desc[4]`** y **`r tabla_clae2_2022$clae2_desc[5]`**, con medias de **`r format(tabla_clae2_2022$media_salario[4], scientific=F)`** y **`r format(tabla_clae2_2022$media_salario[5], scientific=F)`** respectivamente. Si lo comparamos con la media de **`r format(mean(tabla_clae2_2022$media_salario), scientific=F)`** de todos los sectores, observaremos una brecha de entre **`r format(mean(tabla_clae2_2022$media_salario)-tabla_clae2_2022$media_salario[1], scientific=F)`** y **`r format(mean(tabla_clae2_2022$media_salario)-tabla_clae2_2022$media_salario[5], scientific=F)`**. Si se contrasta con la máxima de **`r format(max(tabla_clae2_2022$media_salario), scientific=F)`**, correspondiente al sector de **`r tabla_clae2_2022$clae2_desc[length(tabla_clae2_2022$media_salario)]`**, obtendremos una brecha de **`r format(max(tabla_clae2_2022$media_salario)-tabla_clae2_2022$media_salario[5], scientific=F)`** y de **`r format(max(tabla_clae2_2022$media_salario)-tabla_clae2_2022$media_salario[1], scientific=F)`** para los valores seleccionados.
+
+A continuación, procedemos a graficar con `ggplot()` y `geom_col()` los datos correspondientes a estos últimos 5 valores de los sectores por clae de dos dígitos. Realizamos algunos ajustes estéticos y comparamos. Con `str_wrap()` corregimos la extensión de los strings, y con `reorder()` cambiamos el orden de las barras.
+
+```{r barplot_clae2, fig.align = 'center'}
+
+barplot_clae2 <- ggplot(tabla_clae2_2022[1:5,], 
+       aes(x = media_salario,
+           y = reorder(str_wrap(clae2_desc, width = 30), media_salario)))+
+  geom_col(width = 0.5)+
+  labs(x = "Salario promedio (pesos)", 
+       y = "Sector de actividad (clae2)")+
+  theme_bw()
+
+barplot_clae2
+```
+
+#### Sectores de actividad por letra
+
+La segunda parte corresponde al análisis y visualización de los cinco sectores con promedios salariales más bajos, esta vez por letra de sector de actividad. Al igual que en el paso anterior, construimos una base llamada `tabla_letra_2022` que agrupe por letra y su descripción, y que arroje las medias salariales de todos los departamentos, una vez filtrado para noviembre de 2022 y ordenados de menor a mayor. También realizamos cambios en los caractéres de `letra_desc`.
+
+```{r tabla_letra_2022}
+
+tabla_letra_2022 <- w_mean_df %>% 
+  filter(fecha == "2022-11-01") %>% 
+  group_by(letra, letra_desc) %>% 
+  summarise(media_salario = mean(w_mean),
+            casos = n()) %>% 
+  mutate(letra_desc = str_to_sentence(letra_desc)) %>% 
+  arrange(media_salario)
+
+head(tabla_letra_2022, 5)
+```
+
+Contemplando el encabezado de la nueva tabla, y graficando el `barplot_letra` creado más abajo, se observa el sectores de actividad por letra de menor media salarial corresponde a **`r tabla_letra_2022$letra_desc[1]`**, con una media de **`r format(tabla_letra_2022$media_salario[1], scientific=F)`**. En segundo lugar, se ubica **`r tabla_letra_2022$letra_desc[2]`**, con un promedio de **`r format(tabla_letra_2022$media_salario[2], scientific=F)`**. En tercer lugar, encontramos a **`r tabla_letra_2022$letra_desc[3]`**, con un salario medio de **`r format(tabla_letra_2022$media_salario[3], scientific=F)`**. Los dos sectores siguientes fueron **`r tabla_letra_2022$letra_desc[4]`** y **`r tabla_letra_2022$letra_desc[5]`**, con medias de **`r format(tabla_letra_2022$media_salario[4], scientific=F)`** y **`r format(tabla_letra_2022$media_salario[5], scientific=F)`** respectivamente. Si lo comparamos con la media de **`r format(mean(tabla_letra_2022$media_salario), scientific=F)`** de todos los sectores, observaremos una brecha de entre **`r format(mean(tabla_letra_2022$media_salario)-tabla_letra_2022$media_salario[1], scientific=F)`** y **`r format(mean(tabla_letra_2022$media_salario)-tabla_letra_2022$media_salario[5], scientific=F)`** para los cinco menores valores. Si se contrasta con la máxima de **`r format(max(tabla_letra_2022$media_salario), scientific=F)`**, correspondiente al sector de **`r tabla_letra_2022$letra_desc[length(tabla_letra_2022$media_salario)]`**, obtendremos una brecha entre **`r format(max(tabla_letra_2022$media_salario)-tabla_letra_2022$media_salario[5], scientific=F)`** y **`r format(max(tabla_letra_2022$media_salario)-tabla_letra_2022$media_salario[1], scientific=F)`** para la misma selección.
+
+```{r barplot_letra, fig.align = 'center'}
+barplot_letra <- ggplot(tabla_letra_2022[1:5,],
+                  aes(x = media_salario/1000, 
+                  y = reorder(str_wrap(letra_desc, width = 30), media_salario))) +
+  geom_col(width = 0.5) +
+  labs(y="Sectores de actividad (letra)", x= "Salario promedio (miles de pesos)") +
+  theme_bw() +
+  theme(legend.position='none')
+
+barplot_letra
+```
+
+### 3. Evolución de los 4 sectores con mayores salarios en 2022
+
+La consigna final consiste en seleccionar cuatro sectores de actividad y visualizar la evolución de sus salarios a lo largo de los años disponibles. Para este objetivo, se optó por analizar los sectores de actividad por letra con mayores salarios a noviembre de 2022, graficando una serie de tiempo que contemple su variación desde enero de 2014 a la actualidad.
+
+El primer paso fue construir una nueva tabla que se nombró `tabla_letra_evol` que, empleando nuevamente a `w_mean_df` como base inicial, agrupe las medias salariales por `fecha` y `letra`, y devuelva una nueva media de todos los departamentos para cada fecha y sector de actividad. Reiteramos la modificación de los caractéres de `letra_desc`. Finalmente, exploramos los encabezados de la base.
+
+```{r tabla_letra_evol}
+
+tabla_letra_evol <- w_mean_df %>% 
+  group_by(fecha, letra, letra_desc) %>% 
+  summarise(casos = n(),
+            media_salario = mean(w_mean)) %>% 
+  mutate(letra_desc = str_to_sentence(letra_desc))
+
+head(tabla_letra_evol)
+```
+
+Al momento de graficar la serie de tiempo, se empleó la librería `plotly` y su correspondiente función `ggplotly()` para agregar animación a los datos de las lineas.
+
+```{r plotly, message=FALSE, warning=FALSE}
+library(plotly)
+```
+
+Finalmente, procedemos a graficar con `ggplot()` y con `geom_line()`, filtrando por `letra` los que pudimos identificar como sectores de actividad de mayores salarios a la actualidad. Considerando que la base `tabla_letra_2022` se encuentra ordenada de menor a mayor, podemos usar `tail()` para ver los últimos valores. Estos corresponden a *Explotación de minas y canteras (B), Suministro de electricidad, gas, vapor y aire acondicionado (D), Intermediación financiera y servicios de seguros (K) y Servicio de transporte y almacenamiento (H)*.
+
+```{r tail tabla_letra_2022}
+tail(tabla_letra_2022, 4)
+```
+
+Finalmente, pasamos a graficar la serie del tiempo, filtrando la base `tabla_letra_evol` por las letras seleccionadas con el operador `%in%`. Definimos los parámetros estéticos y graficamos con `ggplotly()` para agregar interactividad al gráfico. Se optó por quitar las leyendas de las lineas, para recurrir directamente a la información que adiciona el recurso de animación incorporado.
+
+```{r lineplot, fig.align = 'center'}
+
+lineplot_letra <- ggplot(filter(tabla_letra_evol, letra %in% c("B","D","K","H")),
+       aes(x = fecha, y = media_salario/1000, color = letra_desc))+
+  geom_line() +
+  labs(y="Salario promedio por mes (pesos)", x= "Fecha") +
+  theme_classic()+
+  theme(legend.position = "none")
+
+ggplotly(lineplot_letra)
+```
+
+El análisis arroja una evolución ascendente de la media salarial para los casi 9 años del periodo seleccionado, en linea con el aumento generalizado de los valores nominales de la economía argentina. La posición de los cuatro sectores no varía a lo largo de los años, manteniendo su preminencia la **Explotación de minas y canteras**. El promedio de salario en este rubro ascendió de **25000** pesos en 2014 a más de **496000** pesos para noviembre de 2022. El segundo rubro, **Suministro de electricidad, gas, vapor y aire acondicionado**, registró un aumento desde los **22000** pesos en enero del primer año hasta casi **397000** pesos. El sector de **Intermediación financiera y servicios de seguros** pasó de unos **15000** pesos a casi **375000** pesos en este lapso, mientras que **Servicios de transporte y almacenamiento** pasó de unos **14000** pesos a unos **289000** pesos. Llama también la atención los picos en las medias de valores nominales para los meses de junio y diciembre de cada año, con algunos ajustes para los meses de marzo y septiembre.
